@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hostinger Reply Alias Fix - Options</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; min-width: 320px; color: #222; }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  label { display: block; margin: 12px 0 4px; font-weight: 600; }
+  select, input[type="text"] { width: 100%; box-sizing: border-box; padding: 6px; font: inherit; }
+  .hint { color: #666; font-size: 12px; margin-top: 4px; }
+  button { margin-top: 14px; padding: 6px 14px; font: inherit; }
+  #status { margin-left: 10px; color: #1a7f37; opacity: 0; transition: opacity .2s; }
+  #status.show { opacity: 1; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+  <h1>Default identity for new messages</h1>
+
+  <div id="pick-wrap">
+    <label for="pick">Known identities</label>
+    <select id="pick"></select>
+  </div>
+  <p id="empty-hint" class="hint" hidden>Open Hostinger Webmail and click Reply on any message once so the extension can learn your identities.</p>
+
+  <label for="email">Or type an email address</label>
+  <input id="email" type="text" placeholder="you@example.com" autocomplete="off" spellcheck="false">
+  <p class="hint">Leave empty to keep Hostinger's default. Replies and forwards always follow the original recipient.</p>
+
+  <button id="save" type="button">Save</button><span id="status" role="status">Saved</span>
+
+  <script src="options.js"></script>
+</body>
+</html>

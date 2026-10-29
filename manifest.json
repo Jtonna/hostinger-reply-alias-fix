@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Hostinger Reply Alias Fix",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "permissions": ["storage"],
+  "options_ui": { "page": "options.html", "open_in_tab": false },
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "description": "On Hostinger Webmail, selects the From identity matching the address a message was sent to when you reply or forward.",
+  "description": "On Hostinger Webmail, selects the From identity matching the address a message was sent to when you reply or forward, and lets you pick a default From identity for new messages.",
   "content_scripts": [
     {
       "matches": ["https://mail.hostinger.com/*"],

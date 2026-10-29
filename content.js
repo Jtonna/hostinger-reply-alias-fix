@@ -3,7 +3,8 @@
  *
  * When a reply/forward composer appears in Hostinger Webmail, read the
  * recipient addresses of the message being replied to and select the matching
- * identity in the composer's From picker. Generic: no hardcoded addresses.
+ * identity in the composer's From picker. New messages use the default
+ * identity chosen on the options page, if any. Generic: no hardcoded addresses.
  */
 (function () {
   'use strict';
@@ -23,6 +24,7 @@
     optionLabel: '[data-qa="composer-sender-option"]',
     message: '[data-qa="message-details"]',
     header: '[data-qa="message-details-header"]',
+    toChip: '[data-qa="composer-to-chip"]',
   };
 
   const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
@@ -50,23 +52,21 @@
     return (text || '').match(EMAIL_RE) || [];
   }
 
-  /** Find the message header related to this composer, or null (new message). */
+  /**
+   * Find the message header related to this composer, or null (new message).
+   * 1. Inline reply/forward: composer sits inside message-details -> that header.
+   * 2. Popped-out reply/forward: outside message-details but To is prefilled
+   *    (a to-chip exists) -> the page's header (the last one if several).
+   * 3. Otherwise (empty To, e.g. "New message" from the sidebar) -> null.
+   */
   function findHeader(composer) {
     const msg = composer.closest(SEL.message);
-    if (msg) {
-      const h = msg.querySelector(SEL.header);
-      if (h) return h;
+    if (msg) return msg.querySelector(SEL.header) || null;
+    if (composer.querySelector(SEL.toChip)) {
+      const headers = document.querySelectorAll(SEL.header);
+      if (headers.length) return headers[headers.length - 1];
     }
-    // Nearest preceding header in document order.
-    let best = null;
-    for (const h of document.querySelectorAll(SEL.header)) {
-      if (h.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING) {
-        best = h; // keep the last one that precedes the composer
-      } else if (!h.contains(composer)) {
-        break;
-      }
-    }
-    return best;
+    return null;
   }
 
   /** Recipient addresses (lowercased) of a header, minus the sender. */
@@ -127,57 +127,111 @@
     }
   }
 
+  const hasStorage = () => typeof chrome !== 'undefined' && !!chrome.storage;
+
+  function storageGet(area, key) {
+    return new Promise((resolve) => {
+      try {
+        if (!hasStorage() || !chrome.storage[area]) return resolve(undefined);
+        chrome.storage[area].get(key, (res) => {
+          if (chrome.runtime && chrome.runtime.lastError) return resolve(undefined);
+          resolve(res ? res[key] : undefined);
+        });
+      } catch (e) { resolve(undefined); }
+    });
+  }
+
+  function storageSet(area, obj) {
+    return new Promise((resolve) => {
+      try {
+        if (!hasStorage() || !chrome.storage[area]) return resolve();
+        chrome.storage[area].set(obj, () => resolve());
+      } catch (e) { resolve(); }
+    });
+  }
+
+  /** Remember the identities seen in the picker (deduped by email) for the options page. */
+  async function cacheIdentities(options) {
+    const seen = new Map();
+    options.forEach((o) => { if (!seen.has(o.email)) seen.set(o.email, { name: o.name, email: o.email }); });
+    if (!seen.size) return;
+    await storageSet('local', { knownIdentities: [...seen.values()] });
+  }
+
+  /**
+   * Open the From picker, read + cache identities, and select the identity
+   * chosen by pickTarget(options) (returns an option or null/undefined).
+   * Returns false if the composer went away mid-way, true otherwise.
+   */
+  async function selectIdentity(composer, btn, pickTarget) {
+    if (!(await openPicker(btn))) { log('picker options did not appear'); await closePicker(btn); return true; }
+    if (!composer.isConnected) return false;
+
+    const options = readOptions();
+    log('identities:', options.map((o) => o.email));
+    await cacheIdentities(options);
+    if (!composer.isConnected) return false;
+
+    const match = pickTarget(options);
+    if (!match) {
+      log('no matching identity; leaving default');
+      await closePicker(btn);
+      return true;
+    }
+
+    const current = norm(textOf(btn));
+    if (current === match.name || current.toLowerCase().includes(match.email)) {
+      log('already using', match.email);
+      await closePicker(btn);
+      return true;
+    }
+
+    match.element.click();
+    await sleep(300);
+    if (!composer.isConnected) return false;
+    const after = norm(textOf(btn));
+    const ok = after === match.name;
+    log(ok ? 'selected' : 'selection may have failed', match.email, '-> button shows:', after);
+    if (isOpen(btn)) await closePicker(btn);
+    return true;
+  }
+
   async function fixComposer(composer) {
     if (!composer.isConnected || inFlight.has(composer)) return;
     inFlight.add(composer);
     try {
       const header = findHeader(composer);
-      if (!header) { log('no related message header; new message, skipping'); return; }
 
       const btn = composer.querySelector(SEL.fromBtn);
       if (!btn) { log('no From button found'); return; }
 
+      if (!header) {
+        // New message: use the user's configured default identity, if any.
+        const raw = await storageGet('sync', 'defaultSenderEmail');
+        const wanted = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+        if (!wanted) { log('no related message header; new message, no default set, skipping'); return; }
+        log('new message; default identity:', wanted);
+        await selectIdentity(composer, btn, (opts) => opts.find((o) => o.email === wanted));
+        return;
+      }
+
       const recips = recipientsOf(header);
       log('recipients of related message:', [...recips]);
 
-      if (!(await openPicker(btn))) { log('picker options did not appear'); await closePicker(btn); return; }
-      if (!composer.isConnected) return;
+      await selectIdentity(composer, btn, (options) => {
+        let match = options.find((o) => recips.has(o.email));
 
-      const options = readOptions();
-      log('identities:', options.map((o) => o.email));
-
-      let match = options.find((o) => recips.has(o.email));
-
-      // Thread fallback: scan all headers on the page, most recent (last) first.
-      if (!match) {
-        const headers = [...document.querySelectorAll(SEL.header)].reverse();
-        for (const h of headers) {
-          const r = recipientsOf(h);
-          match = options.find((o) => r.has(o.email));
-          if (match) { log('matched via thread fallback'); break; }
+        // Thread fallback: scan all headers on the page, most recent (last) first.
+        if (!match) {
+          const headers = [...document.querySelectorAll(SEL.header)].reverse();
+          for (const h of headers) {
+            const r = recipientsOf(h);
+            match = options.find((o) => r.has(o.email));
+            if (match) { log('matched via thread fallback'); break; }
+          }
         }
-      }
-
-      if (!match) {
-        log('no matching identity (maybe BCC); leaving default');
-        await closePicker(btn);
-        return;
-      }
-
-      const current = norm(textOf(btn));
-      if (current === match.name || current.toLowerCase().includes(match.email)) {
-        log('already using', match.email);
-        await closePicker(btn);
-        return;
-      }
-
-      match.element.click();
-      await sleep(300);
-      if (!composer.isConnected) return;
-      const after = norm(textOf(btn));
-      const ok = after === match.name;
-      log(ok ? 'selected' : 'selection may have failed', match.email, '-> button shows:', after);
-      if (isOpen(btn)) await closePicker(btn);
+        return match;
+      });
     } catch (err) {
       console.warn(TAG, 'error', err);
     } finally {

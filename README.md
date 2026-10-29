@@ -10,7 +10,16 @@ Hostinger Webmail's reply composer always defaults the From identity to the mail
 
 When a reply or forward composer opens, the extension reads the recipient addresses from the original message's header and selects the matching identity in the composer's From picker. It is generic: nothing is hardcoded, and it matches against whatever identities the picker offers.
 
-It makes no network calls, requests no permissions, and no data leaves the page. It never sends mail.
+It makes no network calls and never sends mail. The only permission it requests is `storage`, used solely to remember your preference and the list of identities it has seen, locally in your browser.
+
+## Default identity for new messages
+
+By default, new messages use Hostinger's default identity. To choose another:
+
+1. Open the extension's Options: `chrome://extensions` -> Details -> Extension options, or right-click the extension icon -> Options.
+2. Pick an identity from the list (or type an address such as `alias@example.com`) and save.
+
+New messages will then start with that identity. Replies and forwards still follow the original message's recipient. The list fills in as the extension sees your identities: open Webmail and click Reply on any message once. Clear the choice to keep Hostinger's default.
 
 ## Install (unpacked)
 
@@ -29,13 +38,13 @@ For details, set `DEBUG = true` in `content.js`, reload the extension, and look 
 
 - BCC'd aliases cannot be detected, because the address is not in the message header. The default identity stays.
 - Depends on Hostinger's `data-qa` attributes. If Hostinger renames them, the selectors below need updating.
-- Replies and forwards only. New messages use the default identity.
+- New messages use your chosen default identity (see above); replies and forwards follow the original recipient.
 
 ## Development
 
 There is no build step and no dependencies.
 
-1. Edit `content.js`.
+1. Edit `content.js` (or `options.html` / `options.js`).
 2. Reload the extension at `chrome://extensions`, then reload the Webmail tab.
 3. Set `DEBUG = true` in `content.js` to get `[hostinger-reply-alias]` console logs.
 4. Regenerate icons with `python -I scripts/make-icons.py` (standard library only).
@@ -44,13 +53,14 @@ There is no build step and no dependencies.
 
 | Selector | Purpose |
 | --- | --- |
-| `[data-qa="message-composer"]` | Reply/forward/new composer |
+| `[data-qa="message-composer"]` | Reply/forward/new composer (a new message has no related message header) |
 | `button[data-qa="composer-from"]` | From picker button |
 | `li[role="option"]` | Picker options |
 | `[data-qa="composer-sender-option"]` | Option label (name + email) |
 | `[data-qa="message-details"]` | Message container |
 | `[data-qa="message-details-header"]` | Header with sender and recipients |
+| `[data-qa="composer-to-chip"]` | Prefilled recipient chip in the composer (marks a popped-out reply/forward) |
 
 ## License
 
-[MIT](LICENSE) (c) 2026 Jacob Tonna
+[MIT](LICENSE)
