@@ -10,7 +10,7 @@ Hostinger Webmail's reply composer always defaults the From identity to the mail
 
 When a reply or forward composer opens, the extension reads the recipient addresses from the original message's header and selects the matching identity in the composer's From picker. It is generic: nothing is hardcoded, and it matches against whatever identities the picker offers.
 
-It makes no network calls and never sends mail. The only permission it requests is `storage`, used solely to remember your preference and the list of identities it has seen, locally in your browser.
+It makes no network calls and never sends mail. The only permissions it requests are `storage` (to remember your preference, the identities it has seen, and a short activity log, locally in your browser) and `activeTab` (so the status popup can check the current tab when you click the toolbar icon).
 
 ## Default identity for new messages
 
@@ -27,6 +27,16 @@ New messages will then start with that identity. Replies and forwards still foll
 2. Turn on Developer mode.
 3. Click **Load unpacked** and select this folder.
 4. Open (or reload) https://mail.hostinger.com.
+
+## Status popup (0.3.0)
+
+Click the toolbar icon to see what the extension is doing. The **This tab** section shows one of:
+
+- **Active on this tab** (green): the content script is running on the Hostinger Webmail tab.
+- **Hostinger Webmail tab, but the extension isn't running here** (amber): reload the page. A tab opened before the extension was installed (or updated) never receives the content script until it is reloaded; use the **Reload tab** button.
+- **Not a Hostinger Webmail tab** (grey): nothing to do on this tab.
+
+It also lists the identities learned (filled in after you click Reply once), lets you change the default identity for new messages (saved immediately), and shows recent activity. **Rescan open composers** re-runs the fix on composers already open.
 
 ## Verify
 

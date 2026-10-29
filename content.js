@@ -17,6 +17,29 @@
   const TAG = '[hostinger-reply-alias]';
   const log = (...a) => { if (DEBUG) console.log(TAG, ...a); };
 
+  const VERSION = (() => {
+    try { return chrome.runtime.getManifest().version; } catch (e) { return 'unknown'; }
+  })();
+  try { document.documentElement.dataset.hostingerReplyAliasFix = VERSION; } catch (e) { /* ignore */ }
+
+  // Activity ring: independent of DEBUG; mirrored to chrome.storage.local for the popup.
+  const MAX_EVENTS = 20;
+  const events = [];
+  let seenIdentities = [];
+  let persistChain = Promise.resolve();
+
+  function record(msg) {
+    const ev = { t: Date.now(), msg: String(msg) };
+    events.push(ev);
+    if (events.length > MAX_EVENTS) events.shift();
+    persistChain = persistChain.then(async () => {
+      const stored = await storageGet('local', 'activityLog');
+      const list = Array.isArray(stored) ? stored : [];
+      list.push(ev);
+      await storageSet('local', { activityLog: list.slice(-MAX_EVENTS) });
+    }).catch(() => {});
+  }
+
   const SEL = {
     composer: '[data-qa="message-composer"]',
     fromBtn: 'button[data-qa="composer-from"]',
@@ -155,6 +178,7 @@
     const seen = new Map();
     options.forEach((o) => { if (!seen.has(o.email)) seen.set(o.email, { name: o.name, email: o.email }); });
     if (!seen.size) return;
+    seenIdentities = [...seen.values()];
     await storageSet('local', { knownIdentities: [...seen.values()] });
   }
 
@@ -163,8 +187,8 @@
    * chosen by pickTarget(options) (returns an option or null/undefined).
    * Returns false if the composer went away mid-way, true otherwise.
    */
-  async function selectIdentity(composer, btn, pickTarget) {
-    if (!(await openPicker(btn))) { log('picker options did not appear'); await closePicker(btn); return true; }
+  async function selectIdentity(composer, btn, pickTarget, kind) {
+    if (!(await openPicker(btn))) { log('picker options did not appear'); record('From picker did not open'); await closePicker(btn); return true; }
     if (!composer.isConnected) return false;
 
     const options = readOptions();
@@ -175,6 +199,7 @@
     const match = pickTarget(options);
     if (!match) {
       log('no matching identity; leaving default');
+      record(kind + ': no matching identity, left default');
       await closePicker(btn);
       return true;
     }
@@ -182,6 +207,7 @@
     const current = norm(textOf(btn));
     if (current === match.name || current.toLowerCase().includes(match.email)) {
       log('already using', match.email);
+      record(kind + ': already using ' + match.email);
       await closePicker(btn);
       return true;
     }
@@ -192,6 +218,7 @@
     const after = norm(textOf(btn));
     const ok = after === match.name;
     log(ok ? 'selected' : 'selection may have failed', match.email, '-> button shows:', after);
+    record(kind + ': ' + (ok ? 'selected ' : 'tried to select (unconfirmed) ') + match.email);
     if (isOpen(btn)) await closePicker(btn);
     return true;
   }
@@ -203,15 +230,16 @@
       const header = findHeader(composer);
 
       const btn = composer.querySelector(SEL.fromBtn);
-      if (!btn) { log('no From button found'); return; }
+      if (!btn) { log('no From button found'); record('Composer detected but no From button found'); return; }
+      record('Composer detected (' + (header ? 'reply/forward' : 'new message') + ')');
 
       if (!header) {
         // New message: use the user's configured default identity, if any.
         const raw = await storageGet('sync', 'defaultSenderEmail');
         const wanted = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-        if (!wanted) { log('no related message header; new message, no default set, skipping'); return; }
+        if (!wanted) { log('no related message header; new message, no default set, skipping'); record('new message: no default set, left Hostinger default'); return; }
         log('new message; default identity:', wanted);
-        await selectIdentity(composer, btn, (opts) => opts.find((o) => o.email === wanted));
+        await selectIdentity(composer, btn, (opts) => opts.find((o) => o.email === wanted), 'new message');
         return;
       }
 
@@ -231,7 +259,7 @@
           }
         }
         return match;
-      });
+      }, 'reply');
     } catch (err) {
       console.warn(TAG, 'error', err);
     } finally {
@@ -268,5 +296,25 @@
   scanNode(document.body);
 
   window.__hostingerReplyAliasFix = { fixAll };
+
+  try {
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+        if (!msg || typeof msg !== 'object') return;
+        if (msg.type === 'HRA_STATUS') {
+          sendResponse({
+            version: VERSION,
+            composersOnPage: document.querySelectorAll(SEL.composer).length,
+            identitiesSeen: seenIdentities,
+            lastEvents: events.slice(-8),
+          });
+        } else if (msg.type === 'HRA_RESCAN') {
+          fixAll();
+          sendResponse({ ok: true });
+        }
+      });
+    }
+  } catch (e) { /* ignore */ }
+  record('Content script loaded');
   log('loaded');
 })();
