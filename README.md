@@ -1,75 +1,57 @@
 # Hostinger Reply Alias Fix
 
-Chrome extension that makes Hostinger Webmail reply from the alias the message was sent to.
+A Chrome extension that makes Hostinger Webmail send from the right identity.
+
+If you use Hostinger Webmail with several sender identities (aliases) on one mailbox, this extension picks the correct From identity for you. Replies and forwards use the identity the original message was addressed to, and new messages start from a default you choose. It is for anyone who is tired of checking the From field before every send.
 
 ## The problem
 
-Hostinger Webmail's reply composer always defaults the From identity to the mailbox's primary address, even when the original message was sent to one of your aliases. You have to notice and switch it by hand every time.
+Hostinger Webmail's composer always picks the mailbox's primary identity when you reply, ignoring which alias the message was actually sent to. New messages likewise always start from the primary identity. You have to notice and switch it by hand, every time.
 
-## How it works
+## What it does
 
-The extension re-checks composers continuously (lightweight: about once a second, plus whenever the page changes), so navigating within webmail (reply, back to the inbox, New message) never needs a reload. When a reply or forward composer is visible, it reads the recipient addresses from the original message's header and selects the matching identity in the composer's From picker. It is generic: nothing is hardcoded, and it matches against whatever identities the picker offers.
+- Replies and forwards use the identity the original message was addressed to (matched against the To and Cc recipients).
+- New messages use a default identity you choose in the toolbar popup or options page.
+- A toolbar popup shows whether the extension is running on the current tab, the identities it has learned, the default, and recent activity.
+- Set and forget: it re-checks composers continuously, so navigating within Webmail never needs a reload, and on install or update it injects itself into Hostinger tabs that are already open.
+- Private: no network calls, and nothing leaves the page. Permissions are limited to local storage, the active tab, script injection, and `mail.hostinger.com`; see [Privacy and permissions](docs/privacy-and-permissions.md) for why each is needed.
 
-It makes no network calls and never sends mail. On install or update it also injects itself into Hostinger tabs that are already open, so no page refresh is needed. The permissions it requests are `storage` (to remember your preference, the identities it has seen, and a short activity log, locally in your browser), `activeTab` (so the status popup can check the current tab when you click the toolbar icon), `scripting`, and a host permission for mail.hostinger.com (used only to inject the content script into already-open tabs; still no network calls).
-
-## Default identity for new messages
-
-By default, new messages use Hostinger's default identity. To choose another:
-
-1. Open the extension's Options: `chrome://extensions` -> Details -> Extension options, or right-click the extension icon -> Options.
-2. Pick an identity from the list (or type an address such as `alias@example.com`) and save.
-
-New messages will then start with that identity. Replies and forwards still follow the original message's recipient. The list fills in as the extension sees your identities: open Webmail and click Reply on any message once. Clear the choice to keep Hostinger's default.
-
-## Install (unpacked)
+## Install
 
 1. Open `chrome://extensions`.
 2. Turn on Developer mode.
 3. Click **Load unpacked** and select this folder.
 4. Open (or reload) https://mail.hostinger.com.
 
-## Status popup
+## First use
 
-Click the toolbar icon to see what the extension is doing. The **This tab** section shows one of:
+1. Open any message in Webmail and click Reply once. The extension reads the From picker and learns your identities.
+2. Click the toolbar icon and, under **Default for new messages**, choose the identity new messages should start from.
 
-- **Active on this tab** (green): the content script is running on the Hostinger Webmail tab.
-- **Hostinger Webmail tab, but the extension isn't running here** (amber): normally the extension injects itself into open tabs on install/update, but if it did not, click **Inject now** (or **Reload tab**).
-- **Not a Hostinger Webmail tab** (grey): nothing to do on this tab.
+From then on, replying to a message sent to an alias selects that alias within about a second.
 
-It also lists the identities learned (filled in after you click Reply once), lets you change the default identity for new messages (saved immediately), and shows recent activity. **Rescan open composers** re-runs the fix on composers already open.
+## Documentation
 
-## Verify
-
-Open a message that was sent to one of your aliases and click Reply. The From picker should switch to that alias within about a second.
-
-For details, set `DEBUG = true` in `content.js`, reload the extension, and look for `[hostinger-reply-alias]` lines in the DevTools console. To reprocess open composers manually, run `window.__hostingerReplyAliasFix.fixAll()` in the console.
-
-## Limitations
-
-- BCC'd aliases cannot be detected, because the address is not in the message header. The default identity stays.
-- Depends on Hostinger's `data-qa` attributes. If Hostinger renames them, the selectors below need updating.
-- New messages use your chosen default identity (see above); replies and forwards follow the original recipient.
+- [How it works](docs/how-it-works.md): the mechanism, step by step, including retries and the post-selection watch.
+- [Selectors and messages](docs/selectors.md): every page selector the extension depends on, storage keys, and runtime messages.
+- [Popup and options](docs/popup-and-options.md): what the popup states and buttons mean, and how the default identity behaves.
+- [Troubleshooting](docs/troubleshooting.md): symptoms, causes and fixes, debug logging, and what to include in a bug report.
+- [Development](docs/development.md): repo layout, reload cycle, manual testing, and conventions.
+- [Privacy and permissions](docs/privacy-and-permissions.md): each permission explained, and what is stored.
 
 ## Development
 
-There is no build step and no dependencies.
+There is no build step and no dependencies. Edit the files, reload the extension at `chrome://extensions`, then reload the Webmail tab. Regenerate the icons with:
 
-1. Edit `content.js` (or `options.html` / `options.js`).
-2. Reload the extension at `chrome://extensions`, then reload the Webmail tab.
-3. Set `DEBUG = true` in `content.js` to get `[hostinger-reply-alias]` console logs.
-4. Regenerate icons with `python -I scripts/make-icons.py` (standard library only).
+```
+python -I scripts/make-icons.py
+```
 
-## Selectors used
+See [docs/development.md](docs/development.md) for testing details.
 
-| Selector | Purpose |
-| --- | --- |
-| `[data-qa="message-composer"]` | Reply/forward/new composer (a new message has no related message header) |
-| `button[data-qa="composer-from"]` | From picker button |
-| `li[role="option"]` | Picker options |
-| `[data-qa="composer-sender-option"]` | Option label (name + email) |
-| `[data-qa="message-details"]` | Message container |
-| `[data-qa="message-details-header"]` | Header with sender and recipients |
-| `[data-qa="composer-to-chip"]` | Prefilled recipient chip in the composer (marks a popped-out reply/forward) |
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
