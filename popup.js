@@ -111,11 +111,12 @@
     try { version = chrome.runtime.getManifest().version; } catch (e) { /* ignore */ }
 
     if (active) setState('green', 'Active on this tab (v' + (live.version || version) + ')');
-    else if (onHostinger) setState('amber', "Hostinger Webmail tab, but the extension isn't running here. Reload the page.");
+    else if (onHostinger) setState('amber', "Hostinger Webmail tab, but the extension isn't running here. Click Inject now (or reload the page).");
     else setState('', 'Not a Hostinger Webmail tab');
 
     $('rescan').disabled = !active;
     $('reload').disabled = !(tab && tab.id != null);
+    $('inject').hidden = !(onHostinger && !active);
 
     const stored = await storageGet('local', 'knownIdentities');
     identities = Array.isArray(stored) ? stored.filter((i) => i && i.email) : [];
@@ -144,6 +145,15 @@
     const res = await sendToTab({ type: 'HRA_RESCAN' });
     if (!res) setState('amber', 'Rescan failed. Try reloading the tab.');
     else setTimeout(refresh, 1500);
+  });
+
+  $('inject').addEventListener('click', () => {
+    try {
+      chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] }, () => {
+        if (lastErr()) setState('amber', 'Inject failed. Try reloading the tab.');
+        setTimeout(refresh, 1000);
+      });
+    } catch (e) { setState('amber', 'Inject failed. Try reloading the tab.'); }
   });
 
   $('reload').addEventListener('click', () => {

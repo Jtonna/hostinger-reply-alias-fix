@@ -29,6 +29,7 @@
   .saved { color: var(--green); }
   .actions { display: flex; gap: 8px; margin-top: 14px; }
   .actions button { flex: 1; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -52,6 +53,7 @@
 
   <div class="actions">
     <button id="rescan" disabled>Rescan open composers</button>
+    <button id="inject" hidden>Inject now</button>
     <button id="reload" disabled>Reload tab</button>
   </div>
   <script src="popup.js"></script>

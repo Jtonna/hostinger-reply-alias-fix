@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-28
+
+### Fixed
+- Composers that Hostinger reuses or pre-renders were ignored after the first time (New message with a default set did nothing; replies sometimes missed). Detection now re-evaluates on visibility/context change.
+
+### Added
+- Auto-inject into open Hostinger tabs on install/update, so no page refresh is needed.
+- "Inject now" button in the popup.
+
 ## [0.3.0] - 2026-10-28
 
 ### Added

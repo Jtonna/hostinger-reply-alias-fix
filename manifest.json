@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Hostinger Reply Alias Fix",
-  "version": "0.3.0",
-  "permissions": ["storage", "activeTab"],
+  "version": "0.4.0",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["https://mail.hostinger.com/*"],
+  "background": { "service_worker": "background.js" },
   "action": {
     "default_title": "Hostinger Reply Alias Fix",
     "default_popup": "popup.html",

@@ -52,8 +52,11 @@
 
   const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 
-  const processed = new WeakSet(); // composers already handled
+  const handled = new WeakMap();   // composer -> { btn, key } of the last context fully handled
+  const attempts = new WeakMap();  // composer -> failed picker attempts for the current context
   const inFlight = new WeakSet();  // composers currently being handled
+  const MAX_ATTEMPTS = 5;
+  let evaluating = false;          // one evaluateAll at a time (the picker is document-global)
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -188,7 +191,7 @@
    * Returns false if the composer went away mid-way, true otherwise.
    */
   async function selectIdentity(composer, btn, pickTarget, kind) {
-    if (!(await openPicker(btn))) { log('picker options did not appear'); record('From picker did not open'); await closePicker(btn); return true; }
+    if (!(await openPicker(btn))) { log('picker options did not appear'); record('From picker did not open'); await closePicker(btn); return false; }
     if (!composer.isConnected) return false;
 
     const options = readOptions();
@@ -220,33 +223,72 @@
     log(ok ? 'selected' : 'selection may have failed', match.email, '-> button shows:', after);
     record(kind + ': ' + (ok ? 'selected ' : 'tried to select (unconfirmed) ') + match.email);
     if (isOpen(btn)) await closePicker(btn);
+    watchSelection(composer, btn, match); // fire-and-forget
     return true;
   }
 
-  async function fixComposer(composer) {
-    if (!composer.isConnected || inFlight.has(composer)) return;
-    inFlight.add(composer);
-    try {
-      const header = findHeader(composer);
+  /**
+   * Hostinger may asynchronously re-apply the previous identity right after we select ours.
+   * Poll for up to 5s; re-apply at most twice. Never blocks the caller.
+   */
+  function watchSelection(composer, btn, match) {
+    (async () => {
+      try {
+        let reapplied = 0;
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline && reapplied < 2) {
+          await sleep(400);
+          if (isOrphaned() || !composerContext(composer) || !btn.isConnected) return;
+          const cur = norm(textOf(btn));
+          if (cur === match.name || cur.toLowerCase().includes(match.email)) continue;
+          if (!(await openPicker(btn))) { await closePicker(btn); continue; }
+          const fresh = readOptions().find((o) => o.email === match.email);
+          if (!fresh || !composerContext(composer)) { await closePicker(btn); return; }
+          fresh.element.click();
+          await sleep(300);
+          if (isOpen(btn)) await closePicker(btn);
+          reapplied++;
+          log('re-applied', match.email);
+          record('re-applied ' + match.email + ' after Hostinger reset it');
+        }
+      } catch (err) { log('watch error', err); }
+    })();
+  }
 
-      const btn = composer.querySelector(SEL.fromBtn);
-      if (!btn) { log('no From button found'); record('Composer detected but no From button found'); return; }
+  /** Visible composer with a From button, or null (hidden, detached, or not rendered yet). */
+  function composerContext(composer) {
+    if (!composer.isConnected || composer.getClientRects().length === 0) return null;
+    const btn = composer.querySelector(SEL.fromBtn);
+    if (!btn) return null;
+    const header = findHeader(composer);
+    return { composer, btn, header, kind: header ? 'reply' : 'new' };
+  }
+
+  function contextKey(ctx) {
+    const emails = ctx.header ? emailsIn(textOf(ctx.header)).map((e) => e.toLowerCase()).join(',') : '';
+    return ctx.kind + '|' + emails;
+  }
+
+  /** Returns true when the context is fully handled (success or no match), false to retry later. */
+  async function fixComposer(ctx) {
+    const { composer, btn, header } = ctx;
+    try {
       record('Composer detected (' + (header ? 'reply/forward' : 'new message') + ')');
 
       if (!header) {
-        // New message: use the user's configured default identity, if any.
+        // New message: use the user's configured default identity, if any (read fresh each time).
         const raw = await storageGet('sync', 'defaultSenderEmail');
         const wanted = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-        if (!wanted) { log('no related message header; new message, no default set, skipping'); record('new message: no default set, left Hostinger default'); return; }
+        if (!wanted) { log('new message, no default set, skipping'); record('new message: no default set, left Hostinger default'); return true; }
         log('new message; default identity:', wanted);
-        await selectIdentity(composer, btn, (opts) => opts.find((o) => o.email === wanted), 'new message');
-        return;
+        if (!composerContext(composer)) return false; // went away or hidden while reading storage
+        return await selectIdentity(composer, btn, (opts) => opts.find((o) => o.email === wanted), 'new message');
       }
 
       const recips = recipientsOf(header);
       log('recipients of related message:', [...recips]);
 
-      await selectIdentity(composer, btn, (options) => {
+      return await selectIdentity(composer, btn, (options) => {
         let match = options.find((o) => recips.has(o.email));
 
         // Thread fallback: scan all headers on the page, most recent (last) first.
@@ -262,38 +304,83 @@
       }, 'reply');
     } catch (err) {
       console.warn(TAG, 'error', err);
-    } finally {
-      inFlight.delete(composer);
+      return false;
     }
   }
 
-  function schedule(composer) {
-    if (processed.has(composer)) return;
-    processed.add(composer);
-    setTimeout(() => fixComposer(composer), 250);
+  /** Re-check every composer; run the fix for any whose context changed since last handled. */
+  async function evaluateAll() {
+    if (isOrphaned()) { stopWatching(); return; }
+    if (evaluating) return;
+    evaluating = true;
+    try {
+      for (const composer of document.querySelectorAll(SEL.composer)) {
+        if (inFlight.has(composer)) continue;
+        const ctx = composerContext(composer);
+        if (!ctx) {
+          // Hidden/detached: Hostinger may reuse this node and reset From, so forget it.
+          if (handled.has(composer)) { handled.delete(composer); attempts.delete(composer); }
+          continue;
+        }
+        const key = contextKey(ctx);
+        const prev = handled.get(composer);
+        if (prev && prev.btn === ctx.btn && prev.key === key) continue;
+
+        inFlight.add(composer);
+        let done = false;
+        try { done = await fixComposer(ctx); } finally { inFlight.delete(composer); }
+        if (done) {
+          handled.set(composer, { btn: ctx.btn, key });
+          attempts.delete(composer);
+        } else {
+          const n = (attempts.get(composer) || 0) + 1;
+          if (n >= MAX_ATTEMPTS) {
+            record('Giving up on this composer after ' + n + ' attempts');
+            handled.set(composer, { btn: ctx.btn, key });
+            attempts.delete(composer);
+          } else {
+            attempts.set(composer, n);
+          }
+        }
+      }
+    } finally {
+      evaluating = false;
+    }
   }
 
-  function scanNode(node) {
-    if (node.nodeType !== 1) return;
-    if (node.matches && node.matches(SEL.composer)) schedule(node);
-    if (node.querySelectorAll) node.querySelectorAll(SEL.composer).forEach(schedule);
-  }
-
-  /** Manual testing: process every composer currently on the page. */
+  /** Manual testing / HRA_RESCAN: forget what was handled and re-run on every visible composer. */
   function fixAll() {
-    document.querySelectorAll(SEL.composer).forEach((c) => {
-      processed.add(c);
-      fixComposer(c);
-    });
+    document.querySelectorAll(SEL.composer).forEach((c) => { handled.delete(c); attempts.delete(c); });
+    return evaluateAll();
   }
 
-  const observer = new MutationObserver((muts) => {
-    for (const m of muts) m.addedNodes.forEach(scanNode);
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
+  /** True when the extension was reloaded/updated and this script's context is dead. */
+  function isOrphaned() {
+    try { return typeof chrome !== 'undefined' && !(chrome.runtime && chrome.runtime.id); } catch (e) { return true; }
+  }
 
-  // Composer may already be present at load.
-  scanNode(document.body);
+  let debounce = null;
+  let timer = null;
+  function stopWatching() {
+    clearInterval(timer);
+    clearTimeout(debounce);
+    observer.disconnect();
+  }
+  const observer = new MutationObserver(() => {
+    if (isOrphaned()) { stopWatching(); return; }
+    clearTimeout(debounce);
+    debounce = setTimeout(evaluateAll, 150);
+  });
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style', 'class', 'hidden'],
+  });
+
+  // Safety net: cheap periodic re-check (no-op unless a composer's context changed).
+  timer = setInterval(evaluateAll, 1000);
+  evaluateAll();
 
   window.__hostingerReplyAliasFix = { fixAll };
 
@@ -302,9 +389,12 @@
       chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'HRA_STATUS') {
+          const visible = [...document.querySelectorAll(SEL.composer)].map(composerContext).filter(Boolean);
           sendResponse({
             version: VERSION,
             composersOnPage: document.querySelectorAll(SEL.composer).length,
+            visibleComposers: visible.length,
+            handled: visible.map((c) => c.kind),
             identitiesSeen: seenIdentities,
             lastEvents: events.slice(-8),
           });
