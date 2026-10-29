@@ -1,0 +1,8 @@
+.mcp.json
+.claude/
+node_modules/
+*.zip
+*.crx
+*.pem
+.DS_Store
+Thumbs.db
